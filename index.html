@@ -51,6 +51,10 @@
     transform:translate(-50%,-50%);
   }
 
+  @media (max-width: 520px){
+    :root{ --btnW: min(360px, calc(100vw - 16px)); --radius: min(160px, calc(50vw - 38px)); }
+  }
+
   /* ===== Core Card ===== */
   .core{
     position:relative;
@@ -703,6 +707,27 @@ function instanceHTML(id){
   </div>`;
 }
 
+/* Cross-device viewport recovery: display only; saved Stage remains unchanged. */
+function fitButtonPosition(x,y,w,h,vw,vh){
+  const clamp=(v,max)=>Math.max(8,Math.min(Math.max(8,max),v));
+  const valid=Number.isFinite(x)&&Number.isFinite(y);
+  const outside=valid&&(x<0||y<0||x+w>vw||y+h>vh);
+  if(!valid||outside) return {x:clamp((vw-w)/2,vw-w-8),y:clamp((vh-h)/2,vh-h-8)};
+  return {x,y};
+}
+function fitButtonViewport(inst,x,y){
+  const core=inst.querySelector('.core');
+  const p=fitButtonPosition(x,y,core.offsetWidth,core.offsetHeight,innerWidth,innerHeight);
+  inst.style.left=p.x+'px'; inst.style.top=p.y+'px';
+  inst.style.transform=innerWidth<=520?'none':'translate(0,0)';
+}
+window.addEventListener('resize',()=>{
+  WORLD.querySelectorAll('.tbInst').forEach(inst=>{
+    const r=inst.getBoundingClientRect();
+    fitButtonViewport(inst,r.left,r.top);
+  });
+});
+
 /* ====== Create / Clone ====== */
 function createInstance({ id=null, state=null, place="center" }={}){
   const instId = id || uid();
@@ -715,12 +740,8 @@ function createInstance({ id=null, state=null, place="center" }={}){
   WORLD.appendChild(inst);
 
   // initial position
-  if(place === "center" && (st.pos.x==null || st.pos.y==null)){
-    // leave centered via transform
-  }else if(st.pos.x!=null && st.pos.y!=null){
-    inst.style.left = st.pos.x + "px";
-    inst.style.top  = st.pos.y + "px";
-    inst.style.transform = "translate(0,0)";
+  if(innerWidth<=520 || (st.pos.x!=null && st.pos.y!=null)){
+    fitButtonViewport(inst,st.pos.x,st.pos.y);
   }
 
   // init logic
@@ -1148,7 +1169,7 @@ function initInstance(inst, id, state){
     const y = e.clientY - drag.dy;
     inst.style.left = Math.max(8, Math.min(innerWidth - core.offsetWidth - 8, x)) + "px";
     inst.style.top  = Math.max(8, Math.min(innerHeight - core.offsetHeight - 8, y)) + "px";
-    inst.style.transform = "translate(0,0)";
+    inst.style.transform = innerWidth<=520 ? "none" : "translate(0,0)";
   });
   core.addEventListener("pointerup",()=>{
     if(!drag.on) return;
