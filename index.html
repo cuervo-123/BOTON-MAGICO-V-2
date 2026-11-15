@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Tech Blue • One Button MULTI (Clones Autónomos)</title>
+<title>CUERVO MORPH ENGINE V2.3 — SMART TYPOGRAPHY STUDIO</title>
 <meta name="color-scheme" content="dark">
 <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
 
@@ -433,6 +433,34 @@
  .core,.core.morphOn{width:var(--desktopW,var(--btnW));height:var(--desktopH,var(--btnH));}
  .core.morphOn{width:var(--desktopW,min(var(--morphW),calc(100vw - 16px)));height:var(--desktopH,min(var(--morphH),calc(100vh - 16px)));}
 }
+
+/* V2.0 SMART TEXT FIT: presentation only, no geometry or storage changes. */
+.core .left{flex:1 1 auto;min-width:0;max-height:100%;}
+.core .txt{flex:1 1 auto;min-width:0;max-width:100%;max-height:var(--textFitHeight,100%);overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;touch-action:pan-y;}
+.core .txt b,.core .txt small{white-space:pre-wrap;overflow:visible;text-overflow:clip;overflow-wrap:anywhere;word-break:normal;line-height:1.2;}
+.core .txt b{font-size:var(--fitTitle,14px);}
+.core .txt small{font-size:var(--fitSub,12px);}
+.core.morphStack .left{flex:0 1 auto;min-height:0;}
+.core.morphStack .txt{flex:0 1 auto;width:100%;min-height:0;}
+
+/* V2.1: optional text placement, with reserved photo band for outside modes. */
+.core.textPlaced .left{position:absolute;inset:0;max-height:none;width:auto;display:flex;flex-direction:column;align-items:stretch;justify-content:center;padding:8px 12px;pointer-events:none;z-index:1;}
+.core.textPlaced .txt{flex:0 1 auto;width:100%;max-height:var(--textFitHeight,100%);pointer-events:auto;text-align:center;}
+.core.textPlaced .logo{display:none;}
+.core.textPlaced .actions{position:absolute;right:6px;top:6px;z-index:2;}
+.core.textPlaced[data-text-position="top"] .left{justify-content:flex-start;padding-top:36px;}
+.core.textPlaced[data-text-position="bottom"] .left{justify-content:flex-end;}
+.core.textPlaced[data-text-position="left"] .txt{width:68%;text-align:left;align-self:flex-start;}
+.core.textPlaced[data-text-position="right"] .txt{width:68%;text-align:right;align-self:flex-end;}
+.core.textPlaced[data-text-position="above"] .left{justify-content:flex-start;padding-top:36px;max-height:50%;background:rgba(0,0,0,.15);}
+.core.textPlaced[data-text-position="below"] .left{justify-content:flex-start;top:auto;height:var(--belowBand,36px);padding:4px 12px;background:rgba(0,0,0,.15);box-sizing:border-box;}
+.core.textPlaced[data-text-position="above"].textPhoto .coreBgOverlay{top:50%;border-radius:0 0 var(--round) var(--round);clip-path:none;}
+.core.textPlaced[data-text-position="below"].textPhoto .coreBgOverlay{bottom:var(--belowBand,36px);border-radius:var(--round) var(--round) 0 0;clip-path:none;}
+.core.textPlaced.morphOn.textPhoto[data-text-position="above"] .coreBgOverlay{border-radius:0 0 var(--morphR) var(--morphR);}
+.core.textPlaced.morphOn.textPhoto[data-text-position="below"] .coreBgOverlay{border-radius:var(--morphR) var(--morphR) 0 0;}
+/* For circle and hexagon keep the original mask; photo is clipped on whole card. */
+.core.textPlaced.morphStack.textPhoto[data-text-position="above"] .coreBgOverlay,.core.textPlaced.morphStack.textPhoto[data-text-position="below"] .coreBgOverlay{inset:0;border-radius:var(--morphR);clip-path:var(--morphClip);}
+.core.textPlaced.morphStack .left{padding-left:22%;padding-right:22%;}
 </style>
 </head>
 <body>
@@ -608,6 +636,8 @@ function defaultState(){
     cardLogoDataUrl:"",
     cardLogoMode:"icon", // icon | bg
     cardBgOpacity:0.35,
+    textPosition:"original",
+    typography:{},
 
     playlists:[ {name:"Demo", url:"https://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8"} ],
     links:[ {name:"Mi TV Station", url:"https://example.com"} ],
@@ -1045,10 +1075,83 @@ function initInstance(inst, id, state){
     if(!silent) toast("Guardado ✅");
   }
 
+  const textPositions=[['original','Original'],['top','Arriba sobre foto'],['center','Centro'],['bottom','Abajo sobre foto'],['left','Izquierda'],['right','Derecha'],['above','Encima de la foto'],['below','Debajo de la foto']];
+  function getTextPosition(){return textPositions.some(([v])=>v===state.textPosition)?state.textPosition:'original';}
+  const typeFonts={original:'',sans:'Arial, sans-serif',serif:'Georgia, serif',mono:'Courier New, monospace',rounded:'Verdana, sans-serif'};
+  function getTypography(){
+    const raw=state.typography||{}, result={};
+    for(const [key,base] of [['title',14],['sub',12]]){
+      const v=raw[key]||{}; result[key]={size:Math.max(10,Math.min(48,Number(v.size)||base)),font:Object.keys(typeFonts).includes(v.font)?v.font:'original',color:/^#[0-9a-f]{6}$/i.test(v.color||'')?v.color:'',weight:['original','400','700'].includes(v.weight)?v.weight:'original',italic:v.italic===true};
+    }
+    return result;
+  }
+  function applyTypography(){
+    const t=getTypography();
+    for(const [el,v] of [[titleE,t.title],[subE,t.sub]]){
+      el.style.fontFamily=typeFonts[v.font]; el.style.color=v.color;
+      el.style.fontWeight=v.weight==='original'?'':v.weight; el.style.fontStyle=v.italic?'italic':'';
+    }
+  }
+  function setTypeFit(txt,factor){const t=getTypography();txt.style.setProperty('--fitTitle',Math.max(10,t.title.size*factor)+'px');txt.style.setProperty('--fitSub',Math.max(10,t.sub.size*factor)+'px');}
   function applyText(){
+    const position=getTextPosition(), photo=state.cardLogoMode==='bg'&&!!state.cardLogoDataUrl;
+    core.dataset.textPosition=position;
+    core.classList.toggle('textPlaced',photo&&position!=='original');
+    core.classList.toggle('textPhoto',photo);
     titleE.textContent = state.title || "Tech Blue • One Button";
     subE.textContent   = state.sub   || "Click/Enter: araña • Esc: cerrar";
+    applyTypography();
+    scheduleTextFit();
   }
+  let textFitFrame=0;
+  function scheduleTextFit(){
+    if(textFitFrame)return;
+    textFitFrame=requestAnimationFrame(()=>{textFitFrame=0;fitCardText();});
+  }
+  function fitCardText(){
+    const txt=titleE.parentElement, cs=getComputedStyle(core);
+    if(!core.clientHeight||!txt.clientWidth)return;
+    // V2.2: measure natural caption height, independent of previous band and resize handle.
+    if(core.classList.contains('textPlaced') && core.dataset.textPosition==='below'){
+      const left=core.querySelector('.left');
+      const ls=getComputedStyle(left);
+      const pad=(parseFloat(ls.paddingTop)||0)+(parseFloat(ls.paddingBottom)||0);
+      const cap=Math.max(1,Math.min(core.clientHeight-12,Math.floor(core.clientHeight*.48)));
+      let natural=0;
+      txt.style.setProperty('--textFitHeight','none');
+      txt.style.flexShrink='0';
+      for(let step=0;step<=10;step++){
+        setTypeFit(txt,1-step*.08);
+        natural=Math.ceil(txt.scrollHeight+pad);
+        if(natural<=cap)break;
+      }
+      txt.style.removeProperty('flex-shrink');
+      const band=Math.min(cap,Math.max(1,natural));
+      core.style.setProperty('--belowBand',band+'px');
+      txt.style.setProperty('--textFitHeight',Math.max(1,band-pad)+'px');
+      txt.title=txt.scrollHeight>txt.clientHeight+1?titleE.textContent+' — '+subE.textContent:'';
+      return;
+    }
+    let available=core.clientHeight-parseFloat(cs.paddingTop)-parseFloat(cs.paddingBottom);
+    if(core.classList.contains('textPlaced')){
+      const left=core.querySelector('.left'), ls=getComputedStyle(left);
+      available=left.clientHeight-parseFloat(ls.paddingTop)-parseFloat(ls.paddingBottom);
+    } else if(core.classList.contains('morphStack')){
+      const actions=core.querySelector('.actions'),left=core.querySelector('.left');
+      available-=logo.offsetHeight+actions.offsetHeight+(parseFloat(cs.rowGap)||0)+(parseFloat(getComputedStyle(left).rowGap)||0);
+    }
+    txt.style.setProperty('--textFitHeight',Math.max(1,Math.floor(available))+'px');
+    for(let step=0;step<=10;step++){
+        setTypeFit(txt,1-step*.08);
+      if(txt.scrollHeight<=txt.clientHeight+1)break;
+    }
+    const overflow=txt.scrollHeight>txt.clientHeight+1;
+    txt.title=overflow?titleE.textContent+' — '+subE.textContent:'';
+  }
+  if(typeof ResizeObserver==='function'){
+    const textFitObserver=new ResizeObserver(scheduleTextFit);textFitObserver.observe(core);
+  } else window.addEventListener('resize',scheduleTextFit);
+
 
   // background overlay per instance
   let bgOverlay = null;
@@ -1826,8 +1929,13 @@ function initInstance(inst, id, state){
       </div>
       <div class="card">
         <h3>Texto de la tarjeta</h3>
+        <label style="display:block;margin-bottom:8px">Text Position <select id="textPosition">${textPositions.map(([v,label])=>`<option value="${v}" ${getTextPosition()===v?"selected":""}>${label}</option>`).join("")}</select></label>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Para fotos en Background. Debajo reserva espacio adaptativo; encima reserva media tarjeta; en círculo o hexágono conserva la máscara original.</div>
         <input id="tt" placeholder="Título" value="${esc(state.title||"")}">
-        <input id="ts" style="margin-top:8px" placeholder="Subtítulo" value="${esc(state.sub||"")}">
+        <textarea id="ts" rows="4" style="margin-top:8px;min-height:90px" placeholder="Leyenda o subtítulo">${esc(state.sub||"")}</textarea><div style="font-size:11px;color:var(--muted);margin-top:5px">Texto multilínea · ajuste automático. Si falta espacio, amplía la tarjeta o desplaza el texto.</div>
+        <h3 style="margin-top:14px">Smart Typography Studio</h3>
+        ${[['title','Título'],['sub','Leyenda']].map(([k,label])=>{const v=getTypography()[k];return `<fieldset style="margin:8px 0;padding:8px;border:1px solid #657080;border-radius:8px"><legend>${label}</legend><label>Tamaño máximo <input id="ty-${k}-size" type="number" min="10" max="48" value="${v.size}"></label><label>Fuente <select id="ty-${k}-font">${Object.keys(typeFonts).map(f=>`<option value="${f}" ${v.font===f?'selected':''}>${f}</option>`).join('')}</select></label><label>Peso <select id="ty-${k}-weight">${['original','400','700'].map(w=>`<option value="${w}" ${v.weight===w?'selected':''}>${w}</option>`).join('')}</select></label><label><input id="ty-${k}-custom" type="checkbox" ${v.color?'checked':''}> Color personalizado</label><input aria-label="Color ${label}" id="ty-${k}-color" type="color" value="${v.color||'#ffffff'}"><label><input id="ty-${k}-italic" type="checkbox" ${v.italic?'checked':''}> Cursiva</label></fieldset>`;}).join('')}
+        <button class="btn secondary" id="tyReset">Reset Typography</button>
         <div class="row" style="margin-top:10px">
           <button class="btn good" id="saveTxt">Guardar texto</button>
         </div>
@@ -1859,7 +1967,12 @@ function initInstance(inst, id, state){
     inst.querySelector("#saveLook").onclick=()=>{ state.accent=inst.querySelector("#a1").value; state.accent2=inst.querySelector("#a2").value; save(false); };
     inst.querySelector("#pick").onclick=()=>inst.querySelector(".btnPick").click();
 
+    inst.querySelector("#textPosition").onchange=()=>{state.textPosition=inst.querySelector("#textPosition").value;save(true);};
+    inst.querySelector('#tyReset').onclick=()=>{delete state.typography;save(true);renderLook();};
     inst.querySelector("#saveTxt").onclick=()=>{
+      state.typography=Object.fromEntries(['title','sub'].map(k=>{const q=f=>inst.querySelector('#ty-'+k+'-'+f);return [k,{size:Number(q('size').value),font:q('font').value,weight:q('weight').value,color:q('custom').checked?q('color').value:'',italic:q('italic').checked}];}));
+      state.typography=getTypography();
+      state.textPosition=inst.querySelector("#textPosition").value;
       state.title=(inst.querySelector("#tt").value||"").trim()||"Tech Blue • One Button";
       state.sub  =(inst.querySelector("#ts").value||"").trim()||"Click/Enter: araña • Esc: cerrar";
       save(true);
@@ -2098,7 +2211,7 @@ function initInstance(inst, id, state){
 ========================= */
 function recoveryNotice(message){
  const el=document.createElement('div');el.style.cssText='position:fixed;z-index:2147483647;top:8px;left:8px;right:8px;padding:12px;background:#142b43;color:white;font:14px system-ui;border:1px solid #55bfff;border-radius:10px;max-height:40vh;overflow:auto';
- el.textContent='CUERVO V1.9 • '+message+' ';const close=document.createElement('button');close.textContent='Cerrar';close.onclick=()=>el.remove();el.append(close);document.body.append(el);
+ el.textContent='CUERVO V2.3 • '+message+' ';const close=document.createElement('button');close.textContent='Cerrar';close.onclick=()=>el.remove();el.append(close);document.body.append(el);
 }
 (async function boot(){
  await initActive();
