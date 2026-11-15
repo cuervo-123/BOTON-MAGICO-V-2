@@ -409,10 +409,13 @@
 .core.morphStack .left{flex-direction:column;width:72%;text-align:center;gap:5px;}
 .core.morphStack .txt{max-width:100%;}
 
-/* V1.4: mobile flow, presentation only; desktop DNA untouched. */
+.touchGrip{display:none;}
+/* V1.5: mobile flow, presentation only; desktop DNA untouched. */
 @media (max-width: 700px), (hover: none) and (pointer: coarse) and (max-width: 950px){
  .world{overflow-y:auto;overflow-x:hidden;display:flex;flex-direction:column;align-items:center;gap:14px;padding:24px 12px 32px;padding-top:max(24px,env(safe-area-inset-top));padding-bottom:max(32px,env(safe-area-inset-bottom));}
- .tbInst{position:relative;left:auto!important;top:auto!important;transform:none!important;flex:none;max-width:100%;}
+ .tbInst{position:relative;left:var(--touchDX,0px)!important;top:var(--touchDY,0px)!important;transform:none!important;flex:none;max-width:100%;}
+ .tbInst.touchMoving{z-index:32;}
+ .touchGrip{display:block!important;position:absolute;top:0;left:50%;transform:translate(-50%,-45%);z-index:35;min-width:44px;height:28px;border:1px solid #71849a;border-radius:12px;background:#15283c;color:#fff;touch-action:none;user-select:none;-webkit-user-select:none;cursor:grab;font-size:17px;}
  .tbInst:has(.core.open),.tbInst:has(.drawer.show){z-index:30;}
  .core,.core.morphOn{width:var(--mobileW, min(360px, calc(100vw - 24px)));height:var(--mobileH,98px);max-width:calc(100vw - 24px);padding:8px;gap:5px;touch-action:pan-y;}
  .core .logo{width:32px;height:32px;border-radius:10px;}
@@ -697,6 +700,7 @@ function saveState(id, state){
 function instanceHTML(id){
   return `
   <div class="tbInst" data-id="${esc(id)}">
+    <button type="button" class="touchGrip" aria-label="Mover botón" title="Arrastrar botón">⠿</button>
     <div class="core" role="button" tabindex="0">
       <div class="left">
         <div class="logo" title="Click para cambiar logo"></div>
@@ -1243,6 +1247,29 @@ function initInstance(inst, id, state){
   pipHead.addEventListener("pointerup",()=>pipDrag.on=false);
   pipHead.addEventListener("pointercancel",()=>pipDrag.on=false);
 
+  // Mobile drag uses a dedicated grip, preserving scroll and desktop coordinates.
+  const grip=inst.querySelector('.touchGrip');
+  let touchDrag=null;
+  const offset=(key)=>parseFloat(inst.style.getPropertyValue(key))||0;
+  grip.addEventListener('pointerdown',e=>{
+    if(!MOBILE_LAYOUT.matches||touchDrag||e.button!==0)return;
+    e.preventDefault();e.stopPropagation();
+    const r=core.getBoundingClientRect();
+    touchDrag={id:e.pointerId,x:e.clientX,y:e.clientY,dx:offset('--touchDX'),dy:offset('--touchDY'),left:r.left,top:r.top,w:r.width,h:r.height,scroll:WORLD.scrollTop};
+    inst.classList.add('touchMoving');grip.setPointerCapture(e.pointerId);
+  });
+  grip.addEventListener('pointermove',e=>{
+    if(!touchDrag||touchDrag.id!==e.pointerId)return;
+    e.preventDefault();const d=touchDrag, b=WORLD.getBoundingClientRect();
+    const clamp=(v,min,max)=>Math.max(min,Math.min(Math.max(min,max),v));
+    const x=clamp(d.left+e.clientX-d.x,b.left+8,b.right-d.w-8);
+    const y=clamp(d.top+e.clientY-d.y,b.top+18,b.bottom-d.h-8);
+    inst.style.setProperty('--touchDX',(d.dx+x-d.left)+'px');
+    inst.style.setProperty('--touchDY',(d.dy+y-d.top+WORLD.scrollTop-d.scroll)+'px');
+  });
+  function endTouch(e){if(!touchDrag||touchDrag.id!==e.pointerId)return;touchDrag=null;inst.classList.remove('touchMoving');}
+  grip.addEventListener('pointerup',endTouch);grip.addEventListener('pointercancel',endTouch);grip.addEventListener('lostpointercapture',endTouch);
+  grip.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();});
   // ===== Drag CORE (per instance) =====
   let drag={on:false,dx:0,dy:0};
   core.addEventListener("pointerdown",(e)=>{
@@ -1902,6 +1929,7 @@ function initInstance(inst, id, state){
         <p style="color:var(--muted);font-size:12px;margin-top:0">ID: <b>${esc(id)}</b></p>
         <div class="row">
           <button class="btn good" id="cloneMe">🧬 Clone Button</button>
+          <button class="btn secondary" id="mobileArrange">Auto Arrange Mobile</button>
           <button class="btn secondary" id="resetMe">♻️ Reset This</button>
           <button class="btn bad" id="deleteMe">🗑️ Delete This</button>
         </div>
@@ -1928,6 +1956,7 @@ function initInstance(inst, id, state){
     `;
 
     mountStageLibrary(inst);
+    inst.querySelector("#mobileArrange").onclick=()=>{for(const el of WORLD.querySelectorAll(".tbInst")){el.style.removeProperty("--touchDX");el.style.removeProperty("--touchDY");}layoutMobile();hideDrawer();core.classList.remove("open");toast("Auto Layout restaurado");};
     inst.querySelector("#cloneMe").onclick=async()=>{try{await cloneInstance(id);hideDrawer();core.classList.remove("open");}catch(e){toast("Clone error: "+e.message);}};
     inst.querySelector("#buttonImportFile").onchange=async(e)=>{try{const f=e.target.files[0];if(f)inst.querySelector("#box").value=await f.text();}catch(err){toast(err.message);}};
     inst.querySelector("#buttonDeploy").onclick=async()=>{try{const raw=JSON.parse(inst.querySelector("#box").value);if(raw.format===STAGE_FORMAT)throw Error("Usa Stage Library para un Stage completo");deployButtonState(raw,inst);await flushActive();hideDrawer();core.classList.remove("open");toast("Button desplegado ✅");}catch(e){toast("Import error: "+e.message);}};
@@ -1979,7 +2008,7 @@ function initInstance(inst, id, state){
 ========================= */
 function recoveryNotice(message){
  const el=document.createElement('div');el.style.cssText='position:fixed;z-index:2147483647;top:8px;left:8px;right:8px;padding:12px;background:#142b43;color:white;font:14px system-ui;border:1px solid #55bfff;border-radius:10px;max-height:40vh;overflow:auto';
- el.textContent='CUERVO V1.4 • '+message+' ';const close=document.createElement('button');close.textContent='Cerrar';close.onclick=()=>el.remove();el.append(close);document.body.append(el);
+ el.textContent='CUERVO V1.5 • '+message+' ';const close=document.createElement('button');close.textContent='Cerrar';close.onclick=()=>el.remove();el.append(close);document.body.append(el);
 }
 (async function boot(){
  await initActive();
