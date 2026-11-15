@@ -409,12 +409,13 @@
 .core.morphStack .left{flex-direction:column;width:72%;text-align:center;gap:5px;}
 .core.morphStack .txt{max-width:100%;}
 
-.touchGrip{display:none;}
+.touchGrip,.touchResize{display:none;}
 /* V1.6: mobile flow, presentation only; desktop DNA untouched. */
 @media (max-width: 700px), (hover: none) and (pointer: coarse) and (max-width: 950px){
  .world{overflow-y:auto;overflow-x:hidden;display:flex;flex-direction:column;align-items:center;gap:14px;padding:24px 12px 32px;padding-top:max(24px,env(safe-area-inset-top));padding-bottom:max(32px,env(safe-area-inset-bottom));}
  .tbInst{position:relative;left:var(--touchDX,0px)!important;top:var(--touchDY,0px)!important;transform:none!important;flex:none;max-width:100%;}
  .tbInst.touchMoving{z-index:32;}
+ .touchResize{display:block!important;position:absolute;right:0;bottom:0;transform:translateY(25%);z-index:36;width:44px;height:34px;border:1px solid #71849a;border-radius:10px;background:#15283c;color:#fff;touch-action:none;user-select:none;-webkit-user-select:none;cursor:nwse-resize;font-size:18px;}
  .touchGrip{display:block!important;position:absolute;top:0;left:50%;transform:translate(-50%,-45%);z-index:35;min-width:44px;height:28px;border:1px solid #71849a;border-radius:12px;background:#15283c;color:#fff;touch-action:none;user-select:none;-webkit-user-select:none;cursor:grab;font-size:17px;}
  .tbInst:has(.core.open),.tbInst:has(.drawer.show){z-index:30;}
  .core,.core.morphOn{width:var(--mobileW, min(360px, calc(100vw - 24px)));height:var(--mobileH,98px);max-width:calc(100vw - 24px);padding:8px;gap:5px;touch-action:pan-y;}
@@ -424,6 +425,13 @@
  .core:not(.open) .node{pointer-events:none;}
  .core.open{z-index:31;}
  .drawer{right:8px;width:calc(100vw - 16px);}
+}
+@media (min-width:701px){
+ .tbInst .touchResize,.tbInst .touchGrip{display:block;position:absolute;z-index:36;border:1px solid #71849a;border-radius:10px;background:#15283c;color:#fff;touch-action:none;user-select:none;cursor:grab;}
+ .tbInst .touchGrip{top:0;left:50%;transform:translate(-50%,-45%);width:44px;height:28px;}
+ .tbInst .touchResize{right:0;bottom:0;transform:translateY(25%);width:44px;height:34px;cursor:nwse-resize;}
+ .core,.core.morphOn{width:var(--desktopW,var(--btnW));height:var(--desktopH,var(--btnH));}
+ .core.morphOn{width:var(--desktopW,min(var(--morphW),calc(100vw - 16px)));height:var(--desktopH,min(var(--morphH),calc(100vh - 16px)));}
 }
 </style>
 </head>
@@ -701,6 +709,7 @@ function instanceHTML(id){
   return `
   <div class="tbInst" data-id="${esc(id)}">
     <button type="button" class="touchGrip" aria-label="Mover botón" title="Arrastrar botón">⠿</button>
+    <button type="button" class="touchResize" aria-label="Redimensionar botón" title="Resize">↘</button>
     <div class="core" role="button" tabindex="0">
       <div class="left">
         <div class="logo" title="Click para cambiar logo"></div>
@@ -756,8 +765,9 @@ function instanceHTML(id){
 
 const MOBILE_LAYOUT=matchMedia('(max-width: 700px), (hover: none) and (pointer: coarse) and (max-width: 950px)');
 // V1.6: local device presentation, separate from active DNA and exported Stages.
-const MOBILE_MEMORY_KEY='mobile-layout-v1';
+const MOBILE_MEMORY_KEY=MOBILE_LAYOUT.matches?'mobile-layout-v1':'desktop-layout-v1';
 let mobileMemory=Object.create(null), mobileWriteTail=Promise.resolve();
+MOBILE_LAYOUT.addEventListener?.('change',()=>{mobileWriteTail.catch(()=>{}).then(()=>location.reload());});
 async function initMobileMemory(){
  try{const saved=await activeTx('readonly',o=>o.get(MOBILE_MEMORY_KEY));
  if(saved&&typeof saved==='object')for(const [id,p] of Object.entries(saved))if(p&&Number.isFinite(p.dx)&&Number.isFinite(p.dy))mobileMemory[id]=p;
@@ -783,14 +793,33 @@ function mobileDimensions(w,h,vw,vh,stack=false){
  const ratio=Math.min(1,maxW/w,maxH/h);
  return {w:Math.round(w*ratio),h:Math.round(h*ratio)};
 }
+function mobileResizeBounds(core){
+ const stack=core.classList.contains('morphStack');
+ const maxW=Math.max(1,WORLD.clientWidth-32),maxH=Math.max(116,Math.floor(window.visualViewport?.height||innerHeight)-48);
+ return {minW:Math.min(maxW,stack?120:180),minH:Math.min(maxH,stack?116:64),maxW,maxH};
+}
+function constrainMobileSize(w,h,b,ratio=0){
+ const clamp=(v,min,max)=>Math.max(min,Math.min(max,v));
+ if(ratio>0){const hi=Math.min(b.maxW,b.maxH*ratio),lo=Math.min(hi,Math.max(b.minW,b.minH*ratio));w=clamp(w,lo,hi);h=w/ratio;}
+ else {w=clamp(w,b.minW,b.maxW);h=clamp(h,b.minH,b.maxH);}
+ return {w:Math.round(w),h:Math.round(h)};
+}
 function layoutMobile(){
- if(!MOBILE_LAYOUT.matches)return;
+ if(!MOBILE_LAYOUT.matches){
+ for(const inst of WORLD.querySelectorAll('.tbInst')){
+ const c=inst.querySelector('.core'),p=mobileMemory[inst.dataset.id];if(!c||inst.classList.contains('touchResizing'))continue;
+ if(p&&p.w>0&&p.h>0){const d=constrainMobileSize(p.w,p.h,mobileResizeBounds(c),p.lock?p.w/p.h:0);c.style.setProperty('--desktopW',d.w+'px');c.style.setProperty('--desktopH',d.h+'px');}else{c.style.removeProperty('--desktopW');c.style.removeProperty('--desktopH');}
+ if(p&&Number.isFinite(p.x)&&Number.isFinite(p.y)&&!inst.classList.contains('touchMoving')){const pos=fitButtonPosition(p.x,p.y,c.offsetWidth,c.offsetHeight,innerWidth,innerHeight);inst.style.left=pos.x+'px';inst.style.top=pos.y+'px';inst.style.transform='none';}
+ }return;}
+
  for(const inst of WORLD.querySelectorAll('.tbInst')){
   const c=inst.querySelector('.core'); if(!c)continue;
   const morph=c.classList.contains('morphOn'), stack=c.classList.contains('morphStack');
   const w=morph?parseFloat(c.style.getPropertyValue('--morphW'))||360:360;
   const h=morph?parseFloat(c.style.getPropertyValue('--morphH'))||98:98;
-  const d=mobileDimensions(w,h,WORLD.clientWidth,window.visualViewport?.height||innerHeight,stack);
+  const p=mobileMemory[inst.dataset.id];
+  if(inst.classList.contains('touchResizing'))continue;
+  const d=p&&Number.isFinite(p.w)&&Number.isFinite(p.h)&&p.w>0&&p.h>0?constrainMobileSize(p.w,p.h,mobileResizeBounds(c),p.lock?p.w/p.h:0):mobileDimensions(w,h,WORLD.clientWidth,window.visualViewport?.height||innerHeight,stack);
   c.style.setProperty('--mobileW',d.w+'px');c.style.setProperty('--mobileH',d.h+'px');
  }
  for(const inst of WORLD.querySelectorAll('.tbInst'))if(!inst.classList.contains('touchMoving'))applyMobileMemory(inst);
@@ -809,6 +838,7 @@ function fitButtonViewport(inst,x,y){
   const p=fitButtonPosition(x,y,core.offsetWidth,core.offsetHeight,innerWidth,innerHeight);
   inst.style.left=p.x+'px'; inst.style.top=p.y+'px';
   inst.style.transform='none';
+  layoutMobile();
 }
 window.addEventListener('resize',()=>{
   if(MOBILE_LAYOUT.matches){layoutMobile();return;}
@@ -1276,7 +1306,7 @@ function initInstance(inst, id, state){
   let touchDrag=null;
   const offset=(key)=>parseFloat(inst.style.getPropertyValue(key))||0;
   grip.addEventListener('pointerdown',e=>{
-    if(!MOBILE_LAYOUT.matches||touchDrag||e.button!==0)return;
+    if(touchDrag||inst.classList.contains('touchResizing')||e.button!==0)return;
     e.preventDefault();e.stopPropagation();
     const r=core.getBoundingClientRect();
     touchDrag={id:e.pointerId,x:e.clientX,y:e.clientY,dx:offset('--touchDX'),dy:offset('--touchDY'),left:r.left,top:r.top,w:r.width,h:r.height,scroll:WORLD.scrollTop};
@@ -1288,15 +1318,40 @@ function initInstance(inst, id, state){
     const clamp=(v,min,max)=>Math.max(min,Math.min(Math.max(min,max),v));
     const x=clamp(d.left+e.clientX-d.x,b.left+8,b.right-d.w-8);
     const y=clamp(d.top+e.clientY-d.y,b.top+18,b.bottom-d.h-8);
+    if(!MOBILE_LAYOUT.matches){inst.style.left=x+'px';inst.style.top=y+'px';inst.style.transform='none';return;}
     inst.style.setProperty('--touchDX',(d.dx+x-d.left)+'px');
     inst.style.setProperty('--touchDY',(d.dy+y-d.top+WORLD.scrollTop-d.scroll)+'px');
   });
   function endTouch(e){if(!touchDrag||touchDrag.id!==e.pointerId)return;touchDrag=null;inst.classList.remove('touchMoving');
-  mobileMemory[id]={dx:offset('--touchDX'),dy:offset('--touchDY')};
+  const r=core.getBoundingClientRect();mobileMemory[id]={...mobileMemory[id],dx:offset('--touchDX'),dy:offset('--touchDY'),...(!MOBILE_LAYOUT.matches?{x:r.left,y:r.top}:{})};
   persistMobileMemory().then(()=>toast('Device Memory • posición guardada')).catch(()=>toast('Device Memory • no se pudo guardar'));
   }
   grip.addEventListener('pointerup',endTouch);grip.addEventListener('pointercancel',endTouch);grip.addEventListener('lostpointercapture',endTouch);
   grip.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();});
+  // V1.7: mobile-only dimensions, independent from state.morph and exported JSON.
+  const resizeGrip=inst.querySelector('.touchResize');let resizeDrag=null;
+  resizeGrip.addEventListener('pointerdown',e=>{
+   if(resizeDrag||touchDrag||e.button!==0)return;
+   e.preventDefault();e.stopPropagation();const r=core.getBoundingClientRect();
+   const lock=mobileMemory[id]?.lock??(normalizeMorph(state.morph).shape==='circle');
+   resizeDrag={id:e.pointerId,x:e.clientX,y:e.clientY,w:r.width,h:r.height,lock};
+   inst.classList.add('touchMoving','touchResizing');resizeGrip.setPointerCapture(e.pointerId);
+  });
+  resizeGrip.addEventListener('pointermove',e=>{
+   if(!resizeDrag||resizeDrag.id!==e.pointerId)return;e.preventDefault();
+   const d=resizeDrag,dx=e.clientX-d.x,dy=e.clientY-d.y;
+   const w=d.lock?d.w+(Math.abs(dx)>=Math.abs(dy*d.w/d.h)?dx:dy*d.w/d.h):d.w+dx;
+   const size=constrainMobileSize(w,d.h+dy,mobileResizeBounds(core),d.lock?d.w/d.h:0);
+   core.style.setProperty(MOBILE_LAYOUT.matches?'--mobileW':'--desktopW',size.w+'px');core.style.setProperty(MOBILE_LAYOUT.matches?'--mobileH':'--desktopH',size.h+'px');
+  });
+  function endResize(e){
+   if(!resizeDrag||resizeDrag.id!==e.pointerId)return;
+   const lock=resizeDrag.lock;resizeDrag=null;inst.classList.remove('touchMoving','touchResizing');
+   const r=core.getBoundingClientRect();mobileMemory[id]={...mobileMemory[id],dx:offset('--touchDX'),dy:offset('--touchDY'),w:r.width,h:r.height,lock};
+   layoutMobile();persistMobileMemory().then(()=>toast('Device Memory • tamaño guardado')).catch(()=>toast('Device Memory • no se pudo guardar'));
+  }
+  for(const evt of ['pointerup','pointercancel','lostpointercapture'])resizeGrip.addEventListener(evt,endResize);
+  resizeGrip.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();});
   // ===== Drag CORE (per instance) =====
   let drag={on:false,dx:0,dy:0};
   core.addEventListener("pointerdown",(e)=>{
@@ -1324,8 +1379,7 @@ function initInstance(inst, id, state){
     core.classList.remove("dragging");
     // save pos
     const r = inst.getBoundingClientRect();
-    state.pos = { x: Math.round(r.left), y: Math.round(r.top) };
-    save(true);
+    mobileMemory[id]={...mobileMemory[id],dx:0,dy:0,x:r.left,y:r.top};persistMobileMemory().catch(()=>toast("Device Memory: no se pudo guardar"));
   });
   core.addEventListener("pointercancel",()=>{ drag.on=false; core.classList.remove("dragging"); });
 
@@ -1956,7 +2010,9 @@ function initInstance(inst, id, state){
         <p style="color:var(--muted);font-size:12px;margin-top:0">ID: <b>${esc(id)}</b></p>
         <div class="row">
           <button class="btn good" id="cloneMe">🧬 Clone Button</button>
-          <button class="btn secondary" id="mobileArrange">Auto Arrange Mobile</button>
+          <button class="btn secondary" id="mobileArrange">Auto Arrange Device</button>
+          <button class="btn secondary" id="mobileSizeReset">Reset Device Size</button>
+          <label><input type="checkbox" id="mobileRatio"> Lock proportions</label>
           <button class="btn secondary" id="resetMe">♻️ Reset This</button>
           <button class="btn bad" id="deleteMe">🗑️ Delete This</button>
         </div>
@@ -1983,7 +2039,12 @@ function initInstance(inst, id, state){
     `;
 
     mountStageLibrary(inst);
-    inst.querySelector("#mobileArrange").onclick=async()=>{if(!MOBILE_LAYOUT.matches){toast('Auto Arrange disponible en móvil');return;}for(const el of WORLD.querySelectorAll(".tbInst")){delete mobileMemory[el.dataset.id];el.style.removeProperty("--touchDX");el.style.removeProperty("--touchDY");}layoutMobile();hideDrawer();core.classList.remove("open");try{await persistMobileMemory();toast("Auto Layout restaurado y guardado");}catch(e){toast("Auto Layout restaurado; no se pudo guardar");}};
+    const ratioControl=inst.querySelector('#mobileRatio');
+    ratioControl.checked=mobileMemory[id]?.lock??(normalizeMorph(state.morph).shape==='circle');
+    ratioControl.disabled=false;
+    ratioControl.onchange=()=>{mobileMemory[id]={dx:offset('--touchDX'),dy:offset('--touchDY'),...mobileMemory[id],lock:ratioControl.checked};persistMobileMemory().catch(()=>toast('Device Memory: no se pudo guardar'));};
+    inst.querySelector('#mobileSizeReset').onclick=async()=>{const p=mobileMemory[id];if(p){delete p.w;delete p.h;}layoutMobile();hideDrawer();core.classList.remove('open');try{await persistMobileMemory();toast('Mobile Size restaurado');}catch(e){toast('Mobile Size: no se pudo guardar');}};
+    inst.querySelector("#mobileArrange").onclick=async()=>{if(!MOBILE_LAYOUT.matches){const els=[...WORLD.querySelectorAll('.tbInst')];const cols=Math.max(1,Math.ceil(Math.sqrt(els.length))),rows=Math.ceil(els.length/cols),cw=(innerWidth-24)/cols,ch=(innerHeight-32)/rows;for(let i=0;i<els.length;i++){const el=els[i],c=el.querySelector('.core');delete mobileMemory[el.dataset.id];c.style.removeProperty('--desktopW');c.style.removeProperty('--desktopH');const scale=Math.min(1,(cw-16)/c.offsetWidth,(ch-16)/c.offsetHeight);mobileMemory[el.dataset.id]={dx:0,dy:0,x:12+i%cols*cw,y:20+Math.floor(i/cols)*ch,w:Math.max(1,Math.floor(c.offsetWidth*scale)),h:Math.max(1,Math.floor(c.offsetHeight*scale))};}layoutMobile();hideDrawer();core.classList.remove('open');try{await persistMobileMemory();toast('Auto Arrange guardado');}catch(e){toast('No se pudo guardar');}return;}for(const el of WORLD.querySelectorAll(".tbInst")){delete mobileMemory[el.dataset.id];el.style.removeProperty("--touchDX");el.style.removeProperty("--touchDY");}layoutMobile();hideDrawer();core.classList.remove("open");try{await persistMobileMemory();toast("Auto Layout restaurado y guardado");}catch(e){toast("Auto Layout restaurado; no se pudo guardar");}};
     inst.querySelector("#cloneMe").onclick=async()=>{try{await cloneInstance(id);hideDrawer();core.classList.remove("open");}catch(e){toast("Clone error: "+e.message);}};
     inst.querySelector("#buttonImportFile").onchange=async(e)=>{try{const f=e.target.files[0];if(f)inst.querySelector("#box").value=await f.text();}catch(err){toast(err.message);}};
     inst.querySelector("#buttonDeploy").onclick=async()=>{try{const raw=JSON.parse(inst.querySelector("#box").value);if(raw.format===STAGE_FORMAT)throw Error("Usa Stage Library para un Stage completo");deployButtonState(raw,inst);await flushActive();hideDrawer();core.classList.remove("open");toast("Button desplegado ✅");}catch(e){toast("Import error: "+e.message);}};
@@ -2037,7 +2098,7 @@ function initInstance(inst, id, state){
 ========================= */
 function recoveryNotice(message){
  const el=document.createElement('div');el.style.cssText='position:fixed;z-index:2147483647;top:8px;left:8px;right:8px;padding:12px;background:#142b43;color:white;font:14px system-ui;border:1px solid #55bfff;border-radius:10px;max-height:40vh;overflow:auto';
- el.textContent='CUERVO V1.6 • '+message+' ';const close=document.createElement('button');close.textContent='Cerrar';close.onclick=()=>el.remove();el.append(close);document.body.append(el);
+ el.textContent='CUERVO V1.9 • '+message+' ';const close=document.createElement('button');close.textContent='Cerrar';close.onclick=()=>el.remove();el.append(close);document.body.append(el);
 }
 (async function boot(){
  await initActive();
