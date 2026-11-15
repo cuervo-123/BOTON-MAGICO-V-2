@@ -410,7 +410,7 @@
 .core.morphStack .txt{max-width:100%;}
 
 .touchGrip{display:none;}
-/* V1.5: mobile flow, presentation only; desktop DNA untouched. */
+/* V1.6: mobile flow, presentation only; desktop DNA untouched. */
 @media (max-width: 700px), (hover: none) and (pointer: coarse) and (max-width: 950px){
  .world{overflow-y:auto;overflow-x:hidden;display:flex;flex-direction:column;align-items:center;gap:14px;padding:24px 12px 32px;padding-top:max(24px,env(safe-area-inset-top));padding-bottom:max(32px,env(safe-area-inset-bottom));}
  .tbInst{position:relative;left:var(--touchDX,0px)!important;top:var(--touchDY,0px)!important;transform:none!important;flex:none;max-width:100%;}
@@ -755,6 +755,29 @@ function instanceHTML(id){
 }
 
 const MOBILE_LAYOUT=matchMedia('(max-width: 700px), (hover: none) and (pointer: coarse) and (max-width: 950px)');
+// V1.6: local device presentation, separate from active DNA and exported Stages.
+const MOBILE_MEMORY_KEY='mobile-layout-v1';
+let mobileMemory=Object.create(null), mobileWriteTail=Promise.resolve();
+async function initMobileMemory(){
+ try{const saved=await activeTx('readonly',o=>o.get(MOBILE_MEMORY_KEY));
+ if(saved&&typeof saved==='object')for(const [id,p] of Object.entries(saved))if(p&&Number.isFinite(p.dx)&&Number.isFinite(p.dy))mobileMemory[id]=p;
+ }catch(e){console.warn('Mobile memory unavailable',e);setTimeout(()=>toast('Device Memory: lectura no disponible'),500);}
+}
+function persistMobileMemory(){
+ const snapshot=Object.fromEntries(Object.entries(mobileMemory));
+ const next=mobileWriteTail.catch(()=>{}).then(()=>activeTx('readwrite',o=>o.put(snapshot,MOBILE_MEMORY_KEY)));
+ mobileWriteTail=next;next.catch(()=>{});return next;
+}
+function applyMobileMemory(inst){
+ const p=mobileMemory[inst.dataset.id];if(!p)return;
+ const core=inst.querySelector('.core'), r=core.getBoundingClientRect(), b=WORLD.getBoundingClientRect();
+ const oldX=parseFloat(inst.style.getPropertyValue('--touchDX'))||0,oldY=parseFloat(inst.style.getPropertyValue('--touchDY'))||0;
+ const baseX=r.left-oldX,baseY=r.top-oldY+WORLD.scrollTop;
+ const clamp=(v,min,max)=>Math.max(min,Math.min(Math.max(min,max),v));
+ const dx=clamp(p.dx,b.left+8-baseX,b.right-r.width-8-baseX);
+ const dy=clamp(p.dy,b.top+18-baseY,Math.max(b.bottom,b.top+WORLD.scrollHeight)-r.height-8-baseY);
+ inst.style.setProperty('--touchDX',dx+'px');inst.style.setProperty('--touchDY',dy+'px');
+}
 function mobileDimensions(w,h,vw,vh,stack=false){
  const maxW=Math.max(1,vw-32),maxH=Math.max(stack?116:84,Math.min(170,Math.floor((vh-110)/4)));
  const ratio=Math.min(1,maxW/w,maxH/h);
@@ -770,6 +793,7 @@ function layoutMobile(){
   const d=mobileDimensions(w,h,WORLD.clientWidth,window.visualViewport?.height||innerHeight,stack);
   c.style.setProperty('--mobileW',d.w+'px');c.style.setProperty('--mobileH',d.h+'px');
  }
+ for(const inst of WORLD.querySelectorAll('.tbInst'))if(!inst.classList.contains('touchMoving'))applyMobileMemory(inst);
 }
 /* Cross-device viewport recovery: display only; saved Stage remains unchanged. */
 function fitButtonPosition(x,y,w,h,vw,vh){
@@ -1267,7 +1291,10 @@ function initInstance(inst, id, state){
     inst.style.setProperty('--touchDX',(d.dx+x-d.left)+'px');
     inst.style.setProperty('--touchDY',(d.dy+y-d.top+WORLD.scrollTop-d.scroll)+'px');
   });
-  function endTouch(e){if(!touchDrag||touchDrag.id!==e.pointerId)return;touchDrag=null;inst.classList.remove('touchMoving');}
+  function endTouch(e){if(!touchDrag||touchDrag.id!==e.pointerId)return;touchDrag=null;inst.classList.remove('touchMoving');
+  mobileMemory[id]={dx:offset('--touchDX'),dy:offset('--touchDY')};
+  persistMobileMemory().then(()=>toast('Device Memory • posición guardada')).catch(()=>toast('Device Memory • no se pudo guardar'));
+  }
   grip.addEventListener('pointerup',endTouch);grip.addEventListener('pointercancel',endTouch);grip.addEventListener('lostpointercapture',endTouch);
   grip.addEventListener('click',e=>{e.preventDefault();e.stopPropagation();});
   // ===== Drag CORE (per instance) =====
@@ -1956,7 +1983,7 @@ function initInstance(inst, id, state){
     `;
 
     mountStageLibrary(inst);
-    inst.querySelector("#mobileArrange").onclick=()=>{for(const el of WORLD.querySelectorAll(".tbInst")){el.style.removeProperty("--touchDX");el.style.removeProperty("--touchDY");}layoutMobile();hideDrawer();core.classList.remove("open");toast("Auto Layout restaurado");};
+    inst.querySelector("#mobileArrange").onclick=async()=>{if(!MOBILE_LAYOUT.matches){toast('Auto Arrange disponible en móvil');return;}for(const el of WORLD.querySelectorAll(".tbInst")){delete mobileMemory[el.dataset.id];el.style.removeProperty("--touchDX");el.style.removeProperty("--touchDY");}layoutMobile();hideDrawer();core.classList.remove("open");try{await persistMobileMemory();toast("Auto Layout restaurado y guardado");}catch(e){toast("Auto Layout restaurado; no se pudo guardar");}};
     inst.querySelector("#cloneMe").onclick=async()=>{try{await cloneInstance(id);hideDrawer();core.classList.remove("open");}catch(e){toast("Clone error: "+e.message);}};
     inst.querySelector("#buttonImportFile").onchange=async(e)=>{try{const f=e.target.files[0];if(f)inst.querySelector("#box").value=await f.text();}catch(err){toast(err.message);}};
     inst.querySelector("#buttonDeploy").onclick=async()=>{try{const raw=JSON.parse(inst.querySelector("#box").value);if(raw.format===STAGE_FORMAT)throw Error("Usa Stage Library para un Stage completo");deployButtonState(raw,inst);await flushActive();hideDrawer();core.classList.remove("open");toast("Button desplegado ✅");}catch(e){toast("Import error: "+e.message);}};
@@ -1975,6 +2002,8 @@ function initInstance(inst, id, state){
       saveIndex(idx);
       // remove DOM
       inst.remove();
+      delete mobileMemory[id];persistMobileMemory().catch(()=>toast("Device Memory: no se pudo limpiar"));
+      layoutMobile();
       toast("Eliminado ✅");
     };
 
@@ -2008,10 +2037,11 @@ function initInstance(inst, id, state){
 ========================= */
 function recoveryNotice(message){
  const el=document.createElement('div');el.style.cssText='position:fixed;z-index:2147483647;top:8px;left:8px;right:8px;padding:12px;background:#142b43;color:white;font:14px system-ui;border:1px solid #55bfff;border-radius:10px;max-height:40vh;overflow:auto';
- el.textContent='CUERVO V1.5 • '+message+' ';const close=document.createElement('button');close.textContent='Cerrar';close.onclick=()=>el.remove();el.append(close);document.body.append(el);
+ el.textContent='CUERVO V1.6 • '+message+' ';const close=document.createElement('button');close.textContent='Cerrar';close.onclick=()=>el.remove();el.append(close);document.body.append(el);
 }
 (async function boot(){
  await initActive();
+ await initMobileMemory();
  const idx=loadIndex();let mounted=0;const errors=[];
  for(const id of idx){try{createInstance({id,state:loadState(id),place:'manual'});mounted++;}catch(e){for(const el of WORLD.querySelectorAll('.tbInst'))if(el.dataset.id===id)el.remove();errors.push(e.message);}}
  if(!idx.length){const id=uid(),st=defaultState();saveState(id,st);createInstance({id,state:st,place:'center'});mounted++;}
