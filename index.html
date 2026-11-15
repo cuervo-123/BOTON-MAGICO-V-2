@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>CUERVO MORPH ENGINE V2.4 — FOCUS MENU & BACK TO SUITE</title>
+<title>CUERVO MORPH ENGINE V2.5 — SPIDER ISOLATION ENGINE</title>
 <meta name="color-scheme" content="dark">
 <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
 
@@ -475,11 +475,26 @@ body.suiteFocused::before{visibility:hidden;}
 .suiteBack{white-space:nowrap;color:#eaf2ff;border-color:#438bd1;background:#183b5b;}
 @media(max-width:700px){.world.suiteFocused .focusOwner .drawer.show{width:calc(100vw - 16px);max-height:calc(100dvh - 24px);}.suiteBack{font-size:11px;padding:9px 7px;}}
 
+
+/* V2.5: independent navigation surface, without card geometry changes. */
+body.spiderFocused::before{visibility:hidden;}
+body.spiderFocused .world{visibility:hidden;pointer-events:none;}
+.spiderFocus[hidden]{display:none!important;}
+.spiderFocus{position:fixed;inset:0;z-index:1000;background:#080e19;color:#eaf2ff;--radius:clamp(70px,min(calc(50vw - 49px),calc(50vh - 108px)),180px);--radius:clamp(70px,min(calc(50vw - 49px),calc(50dvh - 108px)),180px);}
+.spiderFocus .spider{left:50%;top:50%;}
+.spiderFocus .node{background:#15233b;cursor:pointer;}
+.spiderFocus .nodeLabel{background:#101827;}
+.spiderFocus .spiderBack{position:absolute;top:max(12px,env(safe-area-inset-top));right:12px;z-index:2;padding:10px 14px;border-radius:10px;border:1px solid #438bd1;background:#183b5b;color:white;cursor:pointer;}
+.spiderFocus .spiderHeading{position:absolute;top:max(60px,calc(env(safe-area-inset-top) + 48px));left:12px;right:12px;text-align:center;font:600 14px system-ui;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.spiderFocus .spiderCenter{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:52px;height:52px;border-radius:50%;border:1px solid #438bd1;background:#12243c;color:white;font-size:22px;cursor:pointer;}
+@media(max-height:420px){.spiderFocus .spiderHeading{display:none;}.spiderFocus .spiderBack{font-size:10px;padding:5px;}.spiderFocus{--radius:clamp(65px,min(calc(50vw - 49px),calc(50vh - 50px)),140px);}.spiderFocus .nodeLabel{top:100%;padding:2px 4px;font-size:10px;}}
+
 </style>
 </head>
 <body>
 
 <div class="world" id="world"></div>
+<div id="spiderFocus" class="spiderFocus" hidden><button type="button" class="spiderBack">← BACK TO SUITE</button><div class="spiderHeading"></div><button type="button" class="spiderCenter" aria-label="Cerrar araña">⚡</button></div>
 <div class="toast" id="toast">Listo</div>
 
 <script>window.__CUERVO_TOKEN__="__TOKEN_PLACEHOLDER__";</script>
@@ -603,6 +618,28 @@ function uid(){
 }
 
 const WORLD = document.getElementById("world");
+const spiderFocus=document.getElementById('spiderFocus');
+let spiderSession=null;
+function closeSpiderFocus(){
+ if(!spiderSession)return;
+ const {core,spider}=spiderSession;spiderSession=null;
+ core.appendChild(spider);core.classList.remove('open');
+ spiderFocus.classList.remove('open');spiderFocus.hidden=true;
+ document.body.classList.remove('spiderFocused');
+}
+spiderFocus.querySelector('.spiderBack').addEventListener('click',closeSpiderFocus);
+spiderFocus.querySelector('.spiderCenter').addEventListener('click',closeSpiderFocus);
+function openSpiderFocus(core,title){
+ if(spiderSession&&spiderSession.core===core){closeSpiderFocus();return;}
+ closeSpiderFocus();
+ const spider=core.querySelector('.spider');if(!spider)return;
+ spiderSession={core,spider};core.classList.add('open');
+ spiderFocus.querySelector('.spiderHeading').textContent=title;
+ spiderFocus.appendChild(spider);spiderFocus.hidden=false;spiderFocus.classList.add('open');
+ document.body.classList.add('spiderFocused');
+ spiderFocus.querySelector('.spiderBack').focus({preventScroll:true});
+}
+
 const INDEX_KEY = "tb_onebutton_multi_index_v1";
 
 // V1.2: active workspace in IndexedDB, legacy storage is read-only.
@@ -1247,6 +1284,7 @@ function initInstance(inst, id, state){
 
   // ===== Drawer =====
   function showDrawer(t){
+    closeSpiderFocus();
     for(const other of WORLD.querySelectorAll('.focusOwner'))if(other!==inst)other.dispatchEvent(new Event('tb-suite-back'));
     dTitle.textContent=t;
     inst.classList.add('focusOwner');
@@ -1518,10 +1556,10 @@ function initInstance(inst, id, state){
 
   inst.addEventListener('tb-position-commit',()=>{if(MOBILE_LAYOUT.matches)return;const r=core.getBoundingClientRect();state.pos={x:Math.round(r.left),y:Math.round(r.top)};saveState(id,state);});
   // ===== Spider open/close =====
-  $(".btnToggle").addEventListener("click",(e)=>{ e.stopPropagation(); core.classList.toggle("open"); });
+  $(".btnToggle").addEventListener("click",(e)=>{ e.stopPropagation(); openSpiderFocus(core,titleE.textContent); });
   core.addEventListener("click",(e)=>{
     if(e.target.closest(".node") || e.target.closest("button")) return;
-    core.classList.toggle("open");
+    openSpiderFocus(core,titleE.textContent);
   });
 
   // ===== Desktop color picker =====
@@ -2223,6 +2261,7 @@ function initInstance(inst, id, state){
   // global key handling: esc closes ONLY this instance if focused/open
   document.addEventListener("keydown",(e)=>{
     if(e.key==="Escape"){
+      closeSpiderFocus();
       core.classList.remove("open");
       hideDrawer();
     }
@@ -2242,7 +2281,7 @@ function initInstance(inst, id, state){
 ========================= */
 function recoveryNotice(message){
  const el=document.createElement('div');el.style.cssText='position:fixed;z-index:2147483647;top:8px;left:8px;right:8px;padding:12px;background:#142b43;color:white;font:14px system-ui;border:1px solid #55bfff;border-radius:10px;max-height:40vh;overflow:auto';
- el.textContent='CUERVO V2.3 • '+message+' ';const close=document.createElement('button');close.textContent='Cerrar';close.onclick=()=>el.remove();el.append(close);document.body.append(el);
+ el.textContent='CUERVO V2.5 • '+message+' ';const close=document.createElement('button');close.textContent='Cerrar';close.onclick=()=>el.remove();el.append(close);document.body.append(el);
 }
 (async function boot(){
  await initActive();
