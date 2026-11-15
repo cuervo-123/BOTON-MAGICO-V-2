@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>CUERVO MORPH ENGINE V2.3 — SMART TYPOGRAPHY STUDIO</title>
+<title>CUERVO MORPH ENGINE V2.4 — FOCUS MENU & BACK TO SUITE</title>
 <meta name="color-scheme" content="dark">
 <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
 
@@ -461,6 +461,20 @@
 /* For circle and hexagon keep the original mask; photo is clipped on whole card. */
 .core.textPlaced.morphStack.textPhoto[data-text-position="above"] .coreBgOverlay,.core.textPlaced.morphStack.textPhoto[data-text-position="below"] .coreBgOverlay{inset:0;border-radius:var(--morphR);clip-path:var(--morphClip);}
 .core.textPlaced.morphStack .left{padding-left:22%;padding-right:22%;}
+
+/* V2.4: isolate the selected menu without changing card geometry or DNA. */
+body.suiteFocused::before{visibility:hidden;}
+.world.suiteFocused{background:#080e19;}
+.world.suiteFocused .tbInst{visibility:hidden;pointer-events:none;}
+.world.suiteFocused .tbInst .pip{visibility:hidden;pointer-events:none;}
+.world.suiteFocused .tbInst.focusOwner{z-index:50;}
+.world.suiteFocused .focusOwner .drawer.show{visibility:visible;pointer-events:auto;position:fixed;inset:0;margin:auto;transform:none;box-sizing:border-box;width:min(680px,calc(100vw - 24px));height:fit-content;max-height:calc(100vh - 32px);max-height:calc(100dvh - 32px);background:#101827;overflow:auto;overscroll-behavior:contain;z-index:55;color:var(--ink);}
+.world.suiteFocused .focusOwner.focusFallback{transform:none!important;}
+.world.suiteFocused .focusOwner .drawer.show::backdrop{background:#080e19;}
+.world.suiteFocused .focusOwner .dTop{z-index:2;background:#101827;}
+.suiteBack{white-space:nowrap;color:#eaf2ff;border-color:#438bd1;background:#183b5b;}
+@media(max-width:700px){.world.suiteFocused .focusOwner .drawer.show{width:calc(100vw - 16px);max-height:calc(100dvh - 24px);}.suiteBack{font-size:11px;padding:9px 7px;}}
+
 </style>
 </head>
 <body>
@@ -771,7 +785,7 @@ function instanceHTML(id){
     <div class="drawer" aria-hidden="true">
       <div class="dTop">
         <b class="dTitle">Módulo</b>
-        <button class="xbtn dClose">Cerrar ✕</button>
+        <button type="button" class="xbtn dClose suiteBack">← BACK TO SUITE</button>
       </div>
       <div class="dBody"></div>
     </div>
@@ -1233,15 +1247,31 @@ function initInstance(inst, id, state){
 
   // ===== Drawer =====
   function showDrawer(t){
+    for(const other of WORLD.querySelectorAll('.focusOwner'))if(other!==inst)other.dispatchEvent(new Event('tb-suite-back'));
     dTitle.textContent=t;
+    inst.classList.add('focusOwner');
+    WORLD.classList.add('suiteFocused');document.body.classList.add('suiteFocused');
     drawer.classList.add("show");
     drawer.setAttribute("aria-hidden","false");
+    if(typeof drawer.showPopover==='function'){
+      drawer.setAttribute('popover','manual');
+      try{if(!drawer.matches(':popover-open'))drawer.showPopover();}catch(e){drawer.removeAttribute('popover');inst.classList.add('focusFallback');}
+    }else inst.classList.add('focusFallback');
+    drawer.querySelector('.suiteBack').focus({preventScroll:true});
   }
   function hideDrawer(){
+    const wasOwner=inst.classList.contains('focusOwner');
+    if(drawer.hasAttribute('popover')){try{drawer.hidePopover();}catch(e){}drawer.removeAttribute('popover');}
     drawer.classList.remove("show");
     drawer.setAttribute("aria-hidden","true");
+    inst.classList.remove('focusOwner','focusFallback');
+    if(wasOwner){
+      WORLD.classList.remove('suiteFocused');document.body.classList.remove('suiteFocused');
+      WORLD.querySelectorAll('.core.open').forEach(c=>c.classList.remove('open'));
+    }
   }
   $(".dClose").addEventListener("click", hideDrawer);
+  inst.addEventListener("tb-suite-back",hideDrawer);
 
   // ===== Video/HLS =====
   function destroyHls(){
@@ -2175,6 +2205,7 @@ function initInstance(inst, id, state){
       const idx=loadIndex().filter(x=>x!==id);
       saveIndex(idx);
       // remove DOM
+      hideDrawer();
       inst.remove();
       delete mobileMemory[id];persistMobileMemory().catch(()=>toast("Device Memory: no se pudo limpiar"));
       layoutMobile();
