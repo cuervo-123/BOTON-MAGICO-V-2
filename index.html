@@ -399,6 +399,15 @@
     font-size:12px;
   }
   .pipBody{ padding:10px; }
+
+/* MORPH V1: visual surface only; spider and drawer remain unclipped */
+.core.morphOn{width:min(var(--morphW),calc(100vw - 16px));height:min(var(--morphH),calc(100vh - 16px));height:min(var(--morphH),calc(100dvh - 16px));background:none;border-color:transparent;box-shadow:none;backdrop-filter:none;isolation:isolate;}
+.core.morphOn::before{content:"";position:absolute;inset:0;z-index:-1;pointer-events:none;border:1px solid var(--accent);border-radius:var(--morphR);clip-path:var(--morphClip);background:var(--morphFill);opacity:var(--morphOpacity);box-shadow:inset 0 0 var(--morphGlow) var(--accent);}
+.core.morphOn .coreBgOverlay{border-radius:var(--morphR);clip-path:var(--morphClip);z-index:-1;}
+.core.morphOn .left,.core.morphOn .actions{position:relative;}
+.core.morphOn.morphStack{flex-direction:column;justify-content:center;gap:8px;padding:12px;}
+.core.morphStack .left{flex-direction:column;width:72%;text-align:center;gap:5px;}
+.core.morphStack .txt{max-width:100%;}
 </style>
 </head>
 <body>
@@ -529,11 +538,31 @@ function uid(){
 const WORLD = document.getElementById("world");
 const INDEX_KEY = "tb_onebutton_multi_index_v1";
 
-function loadIndex(){
-  try{ return JSON.parse(localStorage.getItem(INDEX_KEY)) || []; }catch(_){ return []; }
+// V1.2: active workspace in IndexedDB, legacy storage is read-only.
+let activeCache=new Map(), activeDB, writeTail=Promise.resolve(), writeFailed=null;
+function openActiveDB(){return new Promise((resolve,reject)=>{const r=indexedDB.open('tb_onebutton_active_v2',1);r.onblocked=()=>reject(Error("IndexedDB blocked: close other tabs"));r.onupgradeneeded=()=>r.result.createObjectStore('workspace');r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});}
+function activeTx(mode,fn){return new Promise((resolve,reject)=>{const tx=activeDB.transaction('workspace',mode),r=fn(tx.objectStore('workspace'));tx.oncomplete=()=>resolve(r.result);tx.onabort=()=>reject(tx.error||Error('Storage aborted'));tx.onerror=()=>reject(tx.error||Error('Storage error'));});}
+async function initActive(){
+ activeDB=await openActiveDB();const saved=await activeTx('readonly',o=>o.get('active'));
+ if(saved){activeCache=new Map(saved);return;}
+ let ids=[];try{ids=JSON.parse(localStorage.getItem(INDEX_KEY)||'[]');if(!Array.isArray(ids))ids=[];for(const id of ids){const v=localStorage.getItem(keyFor(id));if(v!==null)activeCache.set(keyFor(id),v);}}catch(e){console.warn('Legacy storage unavailable',e);}
+ activeCache.set(INDEX_KEY,JSON.stringify(ids));
+ await activeTx('readwrite',o=>o.put([...activeCache],'active'));
 }
-function saveIndex(arr){
-  localStorage.setItem(INDEX_KEY, JSON.stringify(arr));
+let dirty=false;
+function queueActive(){dirty=true;writeTail=writeTail.catch(()=>{}).then(async()=>{if(!dirty)return;dirty=false;try{await activeTx('readwrite',o=>o.put([...activeCache],'active'));writeFailed=null;}catch(e){dirty=true;writeFailed=e;toast('SAVE FAILED: exporta tu Stage antes de cerrar');throw e;}});writeTail.catch(()=>{});}
+async function flushActive(){if(dirty)queueActive();await writeTail;if(writeFailed)throw writeFailed;}
+function loadIndex(){return JSON.parse(activeCache.get(INDEX_KEY)||'[]');}
+function saveIndex(arr){activeCache.set(INDEX_KEY,JSON.stringify(arr));queueActive();}
+function removeActive(id){activeCache.delete(keyFor(id));queueActive();}
+window.addEventListener('beforeunload',e=>{if(dirty||writeFailed){e.preventDefault();e.returnValue='';}});
+
+function normalizeMorph(v){
+  v=v&&typeof v==='object'?v:{};
+  const choice=(x,a,d)=>a.includes(x)?x:d;
+  const num=(x,a,b,d)=>typeof x==='number'&&Number.isFinite(x)?Math.max(a,Math.min(b,x)):d;
+  const shape=choice(v.shape,['original','rounded','rectangle','circle','hexagon','pill'],'original');
+  return {shape,width:num(v.width,160,700,360),height:num(v.height,98,500,180),material:choice(v.material,['glass','solid','dark'],'glass'),opacity:num(v.opacity,.2,1,.85),glow:num(v.glow,0,60,18)};
 }
 
 function defaultState(){
@@ -633,7 +662,7 @@ function keyFor(id){ return "tb_onebutton_inst_" + id; }
 
 function loadState(id){
   try{
-    const raw = JSON.parse(localStorage.getItem(keyFor(id)));
+    const raw = JSON.parse(activeCache.get(keyFor(id))||"null");
     if(!raw) return defaultState();
     const d = defaultState();
     return {
@@ -647,7 +676,7 @@ function loadState(id){
   }
 }
 function saveState(id, state){
-  localStorage.setItem(keyFor(id), JSON.stringify(state));
+  activeCache.set(keyFor(id), JSON.stringify(state));queueActive();
 }
 
 /* ====== Template (per instance) ====== */
@@ -719,7 +748,7 @@ function fitButtonViewport(inst,x,y){
   const core=inst.querySelector('.core');
   const p=fitButtonPosition(x,y,core.offsetWidth,core.offsetHeight,innerWidth,innerHeight);
   inst.style.left=p.x+'px'; inst.style.top=p.y+'px';
-  inst.style.transform=innerWidth<=520?'none':'translate(0,0)';
+  inst.style.transform='none';
 }
 window.addEventListener('resize',()=>{
   WORLD.querySelectorAll('.tbInst').forEach(inst=>{
@@ -731,7 +760,7 @@ window.addEventListener('resize',()=>{
 /* ====== Create / Clone ====== */
 function createInstance({ id=null, state=null, place="center" }={}){
   const instId = id || uid();
-  const st = state ? structuredClone(state) : loadState(instId);
+  const st = state ? JSON.parse(JSON.stringify(state)) : loadState(instId);
 
   // mount DOM
   const wrap = document.createElement("div");
@@ -747,6 +776,10 @@ function createInstance({ id=null, state=null, place="center" }={}){
   // init logic
   initInstance(inst, instId, st);
 
+  if(innerWidth<=520 || (st.morph && normalizeMorph(st.morph).shape!=="original")){
+    const r=inst.getBoundingClientRect(); fitButtonViewport(inst,r.left,r.top);
+  }
+
   // persist index
   const idx = loadIndex();
   if(!idx.includes(instId)){
@@ -757,22 +790,35 @@ function createInstance({ id=null, state=null, place="center" }={}){
   return instId;
 }
 
-function cloneInstance(fromId){
-  const fromState = loadState(fromId);
-  const newId = uid();
-  const st = structuredClone(fromState);
-
-  // shift position a bit so you see it
-  if(st.pos.x!=null && st.pos.y!=null){
-    st.pos.x += 30;
-    st.pos.y += 30;
-  }else{
-    st.pos = { x: 40, y: 40 };
-  }
-
-  saveState(newId, st);
-  createInstance({ id:newId, state:st, place:"manual" });
-  toast("Clonado ✅ (autónomo)");
+function deployButtonState(raw, sourceInst=null){
+  if(!raw || typeof raw!=="object" || Array.isArray(raw) || typeof raw.title!=="string") throw Error("JSON de botón inválido");
+  const d=defaultState(), st={...d,...JSON.parse(JSON.stringify(raw)),pos:{x:8,y:8},nowPlaying:{...d.nowPlaying,...(raw.nowPlaying||{})}};
+  for(const k of ["links","socials","playlists","favs","queue"]) if(!Array.isArray(st[k])) throw Error("Lista inválida: "+k);
+  if(st.morph) st.morph=normalizeMorph(st.morph);
+  const id=uid(); saveState(id,st);
+  try{
+    createInstance({id,state:st,place:"manual"});
+    const el=WORLD.querySelector('[data-id="'+id+'"]'), core=el.querySelector('.core');
+    const w=core.offsetWidth,h=core.offsetHeight, mx=Math.max(8,innerWidth-w-8),my=Math.max(8,innerHeight-h-8);
+    const others=[...WORLD.querySelectorAll('.tbInst')].filter(e=>e!==el).map(e=>e.querySelector('.core').getBoundingClientRect());
+    const r=sourceInst?.querySelector('.core').getBoundingClientRect();
+    const clamp=(v,m)=>Math.max(8,Math.min(m,v));
+    const candidates=r?[[r.right+16,r.top],[r.left,r.bottom+16],[r.left-w-16,r.top],[r.left,r.top-h-16],[r.left+45,r.top+45]]:[];
+    for(let y=8;y<=my;y+=Math.max(24,Math.floor(h/3))) for(let x=8;x<=mx;x+=Math.max(24,Math.floor(w/3))) candidates.push([x,y]);
+    candidates.push([mx,my],[8,my],[mx,8]);
+    const overlap=(x,y)=>others.reduce((sum,o)=>sum+Math.max(0,Math.min(x+w,o.right)-Math.max(x,o.left))*Math.max(0,Math.min(y+h,o.bottom)-Math.max(y,o.top)),0);
+    const points=candidates.map(([x,y])=>[clamp(x,mx),clamp(y,my)]);
+    points.sort((a,b)=>overlap(...a)-overlap(...b));
+    const [x,y]=points[0]; fitButtonViewport(el,x,y);
+    // Update the live state as well as the saved state.
+    el.dispatchEvent(new CustomEvent('tb-position-commit'));
+    return id;
+  }catch(e){WORLD.querySelector('[data-id="'+id+'"]')?.remove();removeActive(id);saveIndex(loadIndex().filter(x=>x!==id));throw e;}
+}
+async function cloneInstance(fromId){
+  const source=WORLD.querySelector('[data-id="'+fromId+'"]');
+  deployButtonState(loadState(fromId),source); await flushActive();
+  toast("Clonado DNA ✅ (autónomo)");
 }
 
 /* STAGE LIBRARY V1 — isolated from launcher and original persistence */
@@ -806,22 +852,13 @@ function validateStage(x){
   }
   return x;
 }
-function restoreStage(stage){
-  validateStage(stage);
-  const previous=loadIndex(), keys=new Set([...previous,...stage.buttons.map(b=>b.id)].map(keyFor));
-  keys.add(INDEX_KEY);
-  const backup=new Map([...keys].map(k=>[k,localStorage.getItem(k)]));
-  try{
-    previous.forEach(id=>localStorage.removeItem(keyFor(id)));
-    stage.buttons.forEach(b=>saveState(b.id,b.state));
-    saveIndex(stage.buttons.map(b=>b.id));
-  }catch(err){
-    keys.forEach(k=>localStorage.removeItem(k));
-    backup.forEach((v,k)=>{if(v!==null)localStorage.setItem(k,v);});
-    throw err;
-  }
+async function restoreStage(stage){
+ validateStage(stage);await flushActive();const previous=activeCache;const next=new Map(activeCache);
+ for(const id of loadIndex())next.delete(keyFor(id));for(const b of stage.buttons)next.set(keyFor(b.id),JSON.stringify(b.state));next.set(INDEX_KEY,JSON.stringify(stage.buttons.map(b=>b.id)));
+ await activeTx('readwrite',o=>o.put([...next],'active'));activeCache=next;
 }
 function mountStageLibrary(inst){
+  let pendingStage=null;
   const q=x=>inst.querySelector(x), list=q('#stageList'), msg=q('#stageStatus');
   const report=e=>{msg.textContent='Error: '+(e.message||e);};
   const run=fn=>async()=>{try{await fn();}catch(e){report(e);}};
@@ -836,7 +873,7 @@ function mountStageLibrary(inst){
       const info=document.createElement('p'); info.textContent=stage.buttons.length+' botones · '+new Date(stage.updated).toLocaleString();
       const row=document.createElement('div'); row.className='row';
       function button(label,fn){const b=document.createElement('button');b.className='btn';b.textContent=label;b.onclick=run(fn);row.append(b);}
-      button('Load Stage',async()=>{if(!confirm('Cargar '+stage.name+'? Se reemplazará el setup activo. Se guardará una copia de recuperación.'))return;const recovery=captureStage('Recovery · '+new Date().toLocaleString());await put(recovery);restoreStage(stage);location.reload();});
+      button('Load Stage',async()=>{if(!confirm('Cargar '+stage.name+'? Se reemplazará el setup activo. Se guardará una copia de recuperación.'))return;const recovery=captureStage('Recovery · '+new Date().toLocaleString());await put(recovery);await restoreStage(stage);location.reload();});
       button('Update Stage',async()=>{if(!confirm('Actualizar este Stage con el setup actual?'))return;await put(captureStage(stage.name,stage.id));await draw();msg.textContent='Stage actualizado';});
       button('Export JSON',()=>downloadTextFile('one-button-stage-'+stage.id+'.json',JSON.stringify(stage,null,2)));
       button('Delete',async()=>{if(!confirm('Eliminar Stage '+stage.name+'?'))return;await stageStore('readwrite',s=>s.delete(stage.id));await draw();});
@@ -845,7 +882,14 @@ function mountStageLibrary(inst){
     if(!all.length)list.textContent='No hay Stages guardados.';
   }
   q('#stageSave').onclick=run(async()=>{const name=q('#stageName').value.trim();if(!name)throw Error('Escribe un nombre');await put(captureStage(name));await draw();msg.textContent='Stage guardado';q('#stageName').value='';});
-  q('#stageImport').onchange=run(async()=>{const f=q('#stageImport').files[0];if(!f)return;const x=validateStage(JSON.parse(await f.text()));await put({...x,id:uid(),updated:new Date().toISOString()});q('#stageImport').value='';await draw();msg.textContent='Stage importado (no cargado)';});
+  async function selectStage(raw){
+    pendingStage=null; q('#stageDeploy').disabled=true;
+    const x=validateStage(raw); pendingStage={...x,id:uid(),updated:new Date().toISOString()};
+    await put(pendingStage); q('#stageDeploy').disabled=false;
+    await draw(); msg.textContent='Stage importado: '+x.name+' · pulsa Deploy Stage';
+  }
+  q('#stageImport').onchange=run(async()=>{const f=q('#stageImport').files[0];if(!f)return;pendingStage=null;q('#stageDeploy').disabled=true;await selectStage(JSON.parse(await f.text()));q('#stageImport').value='';});
+  q('#stageDeploy').onclick=run(async()=>{if(!pendingStage)return;if(!confirm('Deploy '+pendingStage.name+'? Se reemplazará el setup activo con copia de recuperación.'))return;await put(captureStage('Recovery · '+new Date().toLocaleString()));await restoreStage(pendingStage);location.reload();});
   draw().catch(report);
 }
 
@@ -881,7 +925,19 @@ function initInstance(inst, id, state){
   cardFile.type="file"; cardFile.accept="image/*"; cardFile.style.display="none";
   inst.appendChild(cardFile);
 
+  function applyMorph(){
+    const m=normalizeMorph(state.morph), enabled=m.shape!=="original";
+    core.classList.toggle("morphOn",enabled);
+    core.classList.toggle("morphStack",enabled&&["circle","hexagon"].includes(m.shape));
+    if(!enabled)return;
+    const circle=m.shape==="circle", stack=circle||m.shape==="hexagon";
+    const side=Math.max(32,Math.min(Math.max(180,Math.min(m.width,m.height)),innerWidth-16,innerHeight-16));
+    const w=circle?side:m.width, h=circle?side:stack?Math.max(180,m.height):m.height;
+    const vars={W:w+"px",H:h+"px",R:circle?"50%":m.shape==="pill"?"999px":m.shape==="rectangle"?"3px":"22px",Clip:m.shape==="hexagon"?"polygon(25% 0,75% 0,100% 50%,75% 100%,25% 100%,0 50%)":"none",Fill:m.material==="solid"?"var(--accent)":m.material==="dark"?"#080d17":"linear-gradient(135deg,color-mix(in srgb,var(--accent) 45%,transparent),rgba(12,20,35,.85))",Opacity:m.opacity,Glow:m.glow+"px"};
+    Object.entries(vars).forEach(([k,v])=>core.style.setProperty("--morph"+k,String(v)));
+  }
   function applyTheme(){
+    applyMorph();
     // theme is global variables; but each instance can set its own look by using inline style vars on inst
     inst.style.setProperty("--accent", state.accent);
     inst.style.setProperty("--accent2", state.accent2);
@@ -1169,7 +1225,7 @@ function initInstance(inst, id, state){
     const y = e.clientY - drag.dy;
     inst.style.left = Math.max(8, Math.min(innerWidth - core.offsetWidth - 8, x)) + "px";
     inst.style.top  = Math.max(8, Math.min(innerHeight - core.offsetHeight - 8, y)) + "px";
-    inst.style.transform = innerWidth<=520 ? "none" : "translate(0,0)";
+    inst.style.transform = "none";
   });
   core.addEventListener("pointerup",()=>{
     if(!drag.on) return;
@@ -1182,6 +1238,7 @@ function initInstance(inst, id, state){
   });
   core.addEventListener("pointercancel",()=>{ drag.on=false; core.classList.remove("dragging"); });
 
+  inst.addEventListener('tb-position-commit',()=>{const r=core.getBoundingClientRect();state.pos={x:Math.round(r.left),y:Math.round(r.top)};saveState(id,state);});
   // ===== Spider open/close =====
   $(".btnToggle").addEventListener("click",(e)=>{ e.stopPropagation(); core.classList.toggle("open"); });
   core.addEventListener("click",(e)=>{
@@ -1616,6 +1673,13 @@ function initInstance(inst, id, state){
       </div>
 
       <div class="card">
+        <h3>🧬 MORPH ENGINE V1 — Digital DNA</h3>
+        <label>Shape <select id="mShape">${["original","rounded","rectangle","circle","hexagon","pill"].map(v=>`<option value="${v}" ${normalizeMorph(state.morph).shape===v?"selected":""}>${v}</option>`).join("")}</select></label>
+        <label>Material <select id="mMaterial">${["glass","solid","dark"].map(v=>`<option value="${v}" ${normalizeMorph(state.morph).material===v?"selected":""}>${v}</option>`).join("")}</select></label>
+        ${[["width",160,700,1],["height",98,500,1],["opacity",.2,1,.05],["glow",0,60,1]].map(([k,min,max,step])=>`<label style="display:block;margin-top:8px">${k}: <span id="mv-${k}">${normalizeMorph(state.morph)[k]}</span><input id="m-${k}" type="range" min="${min}" max="${max}" step="${step}" value="${normalizeMorph(state.morph)[k]}"></label>`).join("")}
+        <div class="row"><button class="btn good" id="mSave">Save DNA</button><button class="btn secondary" id="mReset">Original</button></div>
+      </div>
+      <div class="card">
         <h3>Texto de la tarjeta</h3>
         <input id="tt" placeholder="Título" value="${esc(state.title||"")}">
         <input id="ts" style="margin-top:8px" placeholder="Subtítulo" value="${esc(state.sub||"")}">
@@ -1641,6 +1705,11 @@ function initInstance(inst, id, state){
         <input id="bgOp" type="range" min="0.10" max="0.70" step="0.01" value="${esc(String(state.cardBgOpacity ?? 0.35))}">
       </div>
     `;
+    const morphControls=()=>normalizeMorph({shape:inst.querySelector("#mShape").value,material:inst.querySelector("#mMaterial").value,...Object.fromEntries(["width","height","opacity","glow"].map(k=>[k,Number(inst.querySelector("#m-"+k).value)]))});
+    const morphSave=()=>{state.morph=morphControls();save(true);const r=inst.getBoundingClientRect();fitButtonViewport(inst,r.left,r.top);};
+    ["width","height","opacity","glow"].forEach(k=>{inst.querySelector("#m-"+k).oninput=()=>{inst.querySelector("#mv-"+k).textContent=inst.querySelector("#m-"+k).value;};});
+    inst.querySelector("#mSave").onclick=()=>{morphSave();toast("DNA guardado");};
+    inst.querySelector("#mReset").onclick=()=>{delete state.morph;save(true);const r=inst.getBoundingClientRect();fitButtonViewport(inst,r.left,r.top);renderLook();};
     inst.querySelector("#apply").onclick=()=>{ state.accent=inst.querySelector("#a1").value; state.accent2=inst.querySelector("#a2").value; applyTheme(); toast("Aplicado ✨"); };
     inst.querySelector("#saveLook").onclick=()=>{ state.accent=inst.querySelector("#a1").value; state.accent2=inst.querySelector("#a2").value; save(false); };
     inst.querySelector("#pick").onclick=()=>inst.querySelector(".btnPick").click();
@@ -1802,9 +1871,11 @@ function initInstance(inst, id, state){
       </div>
 
       <div class="card">
-        <h3>Export</h3>
+        <h3>BUTTON JSON — Import / Export</h3>
         <div class="row">
           <button class="btn" id="exp">Export JSON</button>
+          <button class="btn good" id="buttonDeploy">Deploy Button JSON</button>
+          <input id="buttonImportFile" type="file" accept=".json,application/json">
         </div>
         <textarea id="box" style="margin-top:10px" placeholder="JSON..."></textarea>
       </div>
@@ -1814,22 +1885,25 @@ function initInstance(inst, id, state){
         <input id="stageName" type="text" maxlength="120" placeholder="Stage name">
         <div class="row"><button class="btn good" id="stageSave">💾 Save New Stage</button></div>
         <p>Import Stage JSON</p><input id="stageImport" type="file" accept=".json,application/json">
+        <button class="btn good" id="stageDeploy" disabled>🚀 Deploy Stage</button>
         <p id="stageStatus" role="status"></p><div id="stageList"></div>
       </div>
     `;
 
     mountStageLibrary(inst);
-    inst.querySelector("#cloneMe").onclick=()=>cloneInstance(id);
+    inst.querySelector("#cloneMe").onclick=async()=>{try{await cloneInstance(id);hideDrawer();core.classList.remove("open");}catch(e){toast("Clone error: "+e.message);}};
+    inst.querySelector("#buttonImportFile").onchange=async(e)=>{try{const f=e.target.files[0];if(f)inst.querySelector("#box").value=await f.text();}catch(err){toast(err.message);}};
+    inst.querySelector("#buttonDeploy").onclick=async()=>{try{const raw=JSON.parse(inst.querySelector("#box").value);if(raw.format===STAGE_FORMAT)throw Error("Usa Stage Library para un Stage completo");deployButtonState(raw,inst);await flushActive();hideDrawer();core.classList.remove("open");toast("Button desplegado ✅");}catch(e){toast("Import error: "+e.message);}};
 
-    inst.querySelector("#resetMe").onclick=()=>{
+    inst.querySelector("#resetMe").onclick=async()=>{
       if(!confirm("RESET THIS borrará los ajustes, enlaces y favoritos guardados de ESTE botón. No afectará Control Center ni el lanzador AI. ¿Continuar?")) return;
-      localStorage.removeItem(keyFor(id));
-      toast("Reset (recarga)"); setTimeout(()=>location.reload(), 600);
+      removeActive(id);
+      try{await flushActive();location.reload();}catch(e){toast(e.message);}
     };
 
     inst.querySelector("#deleteMe").onclick=()=>{
       // remove storage
-      localStorage.removeItem(keyFor(id));
+      removeActive(id);
       // remove from index
       const idx=loadIndex().filter(x=>x!==id);
       saveIndex(idx);
@@ -1866,24 +1940,19 @@ function initInstance(inst, id, state){
 /* =========================
    BOOT
 ========================= */
-(function boot(){
-  const idx = loadIndex();
-  if(idx.length){
-    idx.forEach(id=>{
-      const st = loadState(id);
-      createInstance({ id, state: st, place:"manual" });
-    });
-    toast("Multi instances ✅");
-  }else{
-    // first instance
-    const id = uid();
-    const st = defaultState();
-    // start centered; no pos
-    saveState(id, st);
-    createInstance({ id, state: st, place:"center" });
-    toast("Primera instancia ✅");
-  }
-})();
+function recoveryNotice(message){
+ const el=document.createElement('div');el.style.cssText='position:fixed;z-index:2147483647;top:8px;left:8px;right:8px;padding:12px;background:#142b43;color:white;font:14px system-ui;border:1px solid #55bfff;border-radius:10px;max-height:40vh;overflow:auto';
+ el.textContent='CUERVO V1.3 • '+message+' ';const close=document.createElement('button');close.textContent='Cerrar';close.onclick=()=>el.remove();el.append(close);document.body.append(el);
+}
+(async function boot(){
+ await initActive();
+ const idx=loadIndex();let mounted=0;const errors=[];
+ for(const id of idx){try{createInstance({id,state:loadState(id),place:'manual'});mounted++;}catch(e){for(const el of WORLD.querySelectorAll('.tbInst'))if(el.dataset.id===id)el.remove();errors.push(e.message);}}
+ if(!idx.length){const id=uid(),st=defaultState();saveState(id,st);createInstance({id,state:st,place:'center'});mounted++;}
+ if(errors.length) recoveryNotice('Botones visibles: '+mounted+'/'+idx.length+'. Error: '+errors.join(' | ')+'. No se borraron los datos.');
+ if(!mounted&&idx.length){const el=document.createElement('button');el.textContent='Abrir botón de recuperación (sin borrar Stage)';el.style.cssText='position:fixed;top:48%;left:10%;width:80%;padding:18px;z-index:99999';el.onclick=()=>{try{const id=uid();createInstance({id,state:defaultState()});el.remove();}catch(e){recoveryNotice(e.message);}};document.body.append(el);}
+ requestAnimationFrame(()=>WORLD.querySelectorAll('.tbInst').forEach(el=>{const r=el.getBoundingClientRect();fitButtonViewport(el,r.left,r.top);}));
+})().catch(e=>recoveryNotice('Error de inicio: '+e.message+' • No borres tus datos.'));
 </script>
 
 </body>
