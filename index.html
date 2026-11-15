@@ -408,6 +408,20 @@
 .core.morphOn.morphStack{flex-direction:column;justify-content:center;gap:8px;padding:12px;}
 .core.morphStack .left{flex-direction:column;width:72%;text-align:center;gap:5px;}
 .core.morphStack .txt{max-width:100%;}
+
+/* V1.4: mobile flow, presentation only; desktop DNA untouched. */
+@media (max-width: 700px), (hover: none) and (pointer: coarse) and (max-width: 950px){
+ .world{overflow-y:auto;overflow-x:hidden;display:flex;flex-direction:column;align-items:center;gap:14px;padding:24px 12px 32px;padding-top:max(24px,env(safe-area-inset-top));padding-bottom:max(32px,env(safe-area-inset-bottom));}
+ .tbInst{position:relative;left:auto!important;top:auto!important;transform:none!important;flex:none;max-width:100%;}
+ .tbInst:has(.core.open),.tbInst:has(.drawer.show){z-index:30;}
+ .core,.core.morphOn{width:var(--mobileW, min(360px, calc(100vw - 24px)));height:var(--mobileH,98px);max-width:calc(100vw - 24px);padding:8px;gap:5px;touch-action:pan-y;}
+ .core .logo{width:32px;height:32px;border-radius:10px;}
+ .core .left{gap:5px;}.core .chip{padding:6px;font-size:11px;}.core .actions{gap:4px;}
+ .core.morphStack{padding:6px;gap:4px;}.core.morphStack .left{gap:3px;}
+ .core:not(.open) .node{pointer-events:none;}
+ .core.open{z-index:31;}
+ .drawer{right:8px;width:calc(100vw - 16px);}
+}
 </style>
 </head>
 <body>
@@ -736,6 +750,23 @@ function instanceHTML(id){
   </div>`;
 }
 
+const MOBILE_LAYOUT=matchMedia('(max-width: 700px), (hover: none) and (pointer: coarse) and (max-width: 950px)');
+function mobileDimensions(w,h,vw,vh,stack=false){
+ const maxW=Math.max(1,vw-32),maxH=Math.max(stack?116:84,Math.min(170,Math.floor((vh-110)/4)));
+ const ratio=Math.min(1,maxW/w,maxH/h);
+ return {w:Math.round(w*ratio),h:Math.round(h*ratio)};
+}
+function layoutMobile(){
+ if(!MOBILE_LAYOUT.matches)return;
+ for(const inst of WORLD.querySelectorAll('.tbInst')){
+  const c=inst.querySelector('.core'); if(!c)continue;
+  const morph=c.classList.contains('morphOn'), stack=c.classList.contains('morphStack');
+  const w=morph?parseFloat(c.style.getPropertyValue('--morphW'))||360:360;
+  const h=morph?parseFloat(c.style.getPropertyValue('--morphH'))||98:98;
+  const d=mobileDimensions(w,h,WORLD.clientWidth,window.visualViewport?.height||innerHeight,stack);
+  c.style.setProperty('--mobileW',d.w+'px');c.style.setProperty('--mobileH',d.h+'px');
+ }
+}
 /* Cross-device viewport recovery: display only; saved Stage remains unchanged. */
 function fitButtonPosition(x,y,w,h,vw,vh){
   const clamp=(v,max)=>Math.max(8,Math.min(Math.max(8,max),v));
@@ -745,12 +776,14 @@ function fitButtonPosition(x,y,w,h,vw,vh){
   return {x,y};
 }
 function fitButtonViewport(inst,x,y){
+  if(MOBILE_LAYOUT.matches){layoutMobile();return;}
   const core=inst.querySelector('.core');
   const p=fitButtonPosition(x,y,core.offsetWidth,core.offsetHeight,innerWidth,innerHeight);
   inst.style.left=p.x+'px'; inst.style.top=p.y+'px';
   inst.style.transform='none';
 }
 window.addEventListener('resize',()=>{
+  if(MOBILE_LAYOUT.matches){layoutMobile();return;}
   WORLD.querySelectorAll('.tbInst').forEach(inst=>{
     const r=inst.getBoundingClientRect();
     fitButtonViewport(inst,r.left,r.top);
@@ -780,6 +813,7 @@ function createInstance({ id=null, state=null, place="center" }={}){
     const r=inst.getBoundingClientRect(); fitButtonViewport(inst,r.left,r.top);
   }
 
+  layoutMobile();
   // persist index
   const idx = loadIndex();
   if(!idx.includes(instId)){
@@ -798,6 +832,7 @@ function deployButtonState(raw, sourceInst=null){
   const id=uid(); saveState(id,st);
   try{
     createInstance({id,state:st,place:"manual"});
+    if(MOBILE_LAYOUT.matches){layoutMobile();return id;}
     const el=WORLD.querySelector('[data-id="'+id+'"]'), core=el.querySelector('.core');
     const w=core.offsetWidth,h=core.offsetHeight, mx=Math.max(8,innerWidth-w-8),my=Math.max(8,innerHeight-h-8);
     const others=[...WORLD.querySelectorAll('.tbInst')].filter(e=>e!==el).map(e=>e.querySelector('.core').getBoundingClientRect());
@@ -948,6 +983,7 @@ function initInstance(inst, id, state){
     applyTheme();
     applyCardLogo();
     applyText();
+    layoutMobile();
     if(!silent) toast("Guardado ✅");
   }
 
@@ -1210,6 +1246,7 @@ function initInstance(inst, id, state){
   // ===== Drag CORE (per instance) =====
   let drag={on:false,dx:0,dy:0};
   core.addEventListener("pointerdown",(e)=>{
+    if(MOBILE_LAYOUT.matches)return;
     // don’t drag when clicking buttons/nodes
     if(e.target.closest("button") || e.target.closest(".node")) return;
     drag.on=true;
@@ -1238,7 +1275,7 @@ function initInstance(inst, id, state){
   });
   core.addEventListener("pointercancel",()=>{ drag.on=false; core.classList.remove("dragging"); });
 
-  inst.addEventListener('tb-position-commit',()=>{const r=core.getBoundingClientRect();state.pos={x:Math.round(r.left),y:Math.round(r.top)};saveState(id,state);});
+  inst.addEventListener('tb-position-commit',()=>{if(MOBILE_LAYOUT.matches)return;const r=core.getBoundingClientRect();state.pos={x:Math.round(r.left),y:Math.round(r.top)};saveState(id,state);});
   // ===== Spider open/close =====
   $(".btnToggle").addEventListener("click",(e)=>{ e.stopPropagation(); core.classList.toggle("open"); });
   core.addEventListener("click",(e)=>{
@@ -1942,7 +1979,7 @@ function initInstance(inst, id, state){
 ========================= */
 function recoveryNotice(message){
  const el=document.createElement('div');el.style.cssText='position:fixed;z-index:2147483647;top:8px;left:8px;right:8px;padding:12px;background:#142b43;color:white;font:14px system-ui;border:1px solid #55bfff;border-radius:10px;max-height:40vh;overflow:auto';
- el.textContent='CUERVO V1.3 • '+message+' ';const close=document.createElement('button');close.textContent='Cerrar';close.onclick=()=>el.remove();el.append(close);document.body.append(el);
+ el.textContent='CUERVO V1.4 • '+message+' ';const close=document.createElement('button');close.textContent='Cerrar';close.onclick=()=>el.remove();el.append(close);document.body.append(el);
 }
 (async function boot(){
  await initActive();
